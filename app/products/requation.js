@@ -2,7 +2,7 @@
 
 import React from "react";
 import { useDebouncedValue } from "@mantine/hooks";
-import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Plus, Search, X } from "lucide-react";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { ModalDrawer } from "@/components/shared/ModalDrawer";
 import useStore from "@/lib/swr/use-store";
-import { requisitionApi } from "@/lib/api-service-return";
 import { getRequest } from "@/utils/apiRequests";
 import { imageGetUrl } from "@/utils/helpers";
 
@@ -45,6 +44,32 @@ export default function Requisition({ store: storeFromProps }) {
       return res;
     },
     getNextPageParam: (lastPage) => lastPage?.nextPage,
+  });
+
+  const {
+    data: requisitionsFromDb = [],
+    isLoading: requisitionsLoading,
+    refetch: refetchRequisitionsFromDb,
+  } = useQuery({
+    queryKey: ["GET_REQUISITIONS_FROM_DB", storeId],
+    enabled: !!storeId,
+    queryFn: async () => {
+      const listRes = await getRequest(`/requisitions?pos_id=${storeId}&page=1&limit=200`);
+      console.log("[Requisition][GET /requisitions] response:", listRes);
+      const list = listRes?.data || [];
+      console.log("[Requisition][GET /requisitions] rows:", list);
+
+      const withDetails = await Promise.all(
+        list.map(async (row) => {
+          const detail = await getRequest(`/requisitions/${row.requisition_id}`);
+          console.log(`[Requisition][GET /requisitions/${row.requisition_id}] response:`, detail);
+          return detail?.data || { ...row, items: [] };
+        })
+      );
+      console.log("[Requisition] merged requisitions with details:", withDetails);
+
+      return withDetails;
+    },
   });
 
   const addVariant = (variant) => {
@@ -89,15 +114,15 @@ export default function Requisition({ store: storeFromProps }) {
     );
   };
 
-  const removeRequisitionItem = (variant) => {
-    setRequisitionItems((prev) => prev.filter((item) => item?.sku_id !== variant?.sku_id));
-  };
+  // const removeRequisitionItem = (variant) => {
+  //   setRequisitionItems((prev) => prev.filter((item) => item?.sku_id !== variant?.sku_id));
+  // };
 
-  const handleOpenViewModal = (variant) => {
-    setActiveRequisitionItem(variant);
-    setViewQuantity(variant?.quantity ?? 1);
-    setViewModalOpen(true);
-  };
+  // const handleOpenViewModal = (variant) => {
+  //   setActiveRequisitionItem(variant);
+  //   setViewQuantity(variant?.quantity ?? 1);
+  //   setViewModalOpen(true);
+  // };
 
   const handleCloseViewModal = () => {
     setViewModalOpen(false);
@@ -115,9 +140,9 @@ export default function Requisition({ store: storeFromProps }) {
   const filteredSelectedVariants = selectedVariants.filter((variant) =>
     (variant?.variant_name || "").toLowerCase().includes(search.toLowerCase())
   );
-  const filteredRequisitionItems = requisitionItems.filter((variant) =>
-    (variant?.variant_name || "").toLowerCase().includes(search.toLowerCase())
-  );
+  // const filteredRequisitionItems = requisitionItems.filter((variant) =>
+  //   (variant?.variant_name || "").toLowerCase().includes(search.toLowerCase())
+  // );
 
   const handleCloseRequisitionModal = () => {
     setRequisitionModalOpen(false);
@@ -133,7 +158,33 @@ export default function Requisition({ store: storeFromProps }) {
 
   const createRequisitionMutation = useMutation({
     mutationFn: async (payload) => {
-      return requisitionApi.createRequisition(payload);
+      const AUTH_TOKEN =
+        typeof window !== "undefined"
+          ? localStorage?.getItem("x_auth_token") || ""
+          : "";
+
+      const response = await fetch(`${process.env.APP_API_URL}/requisitions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-auth-token": `${AUTH_TOKEN}`,
+        },
+        credentials: "include",
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        let errorMessage;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData?.message || `Error: ${response.status}`;
+        } catch (e) {
+          errorMessage = `Error: ${response.status} ${response.statusText}`;
+        }
+        throw new Error(errorMessage);
+      }
+
+      return response.json();
     },
     onSuccess: () => {
       toast.success("Requisition created successfully");
@@ -143,6 +194,7 @@ export default function Requisition({ store: storeFromProps }) {
       setRequisitionModalOpen(false);
       setPickerOpen(false);
       setPickerSearch("");
+      refetchRequisitionsFromDb();
     },
     onError: (error) => {
       toast.error(error?.message || "Failed to create requisition");
@@ -314,7 +366,7 @@ export default function Requisition({ store: storeFromProps }) {
         </div>
       </ModalDrawer>
 
-      <div className="rounded-md border bg-white p-3">
+      {/* <div className="rounded-md border bg-white p-3">
         <h3 className="text-sm font-semibold mb-2">Requisition Items</h3>
         {filteredRequisitionItems.length === 0 ? (
           <p className="text-sm text-gray-500">No product selected.</p>
@@ -335,6 +387,61 @@ export default function Requisition({ store: storeFromProps }) {
                     <X className="h-4 w-4 text-red-500" />
                   </Button>
                 </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div> */}
+
+      <div className="rounded-md border bg-white p-3">
+        <h3 className="text-sm font-semibold mb-2">All Requisitions</h3>
+        {requisitionsLoading ? (
+          <p className="text-sm text-gray-500">Loading requisitions...</p>
+        ) : requisitionsFromDb.length === 0 ? (
+          <p className="text-sm text-gray-500">No requisition data found.</p>
+        ) : (
+          <div className="space-y-3">
+            {requisitionsFromDb.map((reqItem) => (
+              <div key={reqItem?.requisition_id} className="rounded-md border p-3">
+                {/* <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 border-b pb-2 mb-2">
+                  <div>
+                    <p className="text-sm font-semibold">
+                      Requisition #{reqItem?.requisition_no || reqItem?.requisition_id}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      POS ID: {reqItem?.pos_id} | Total Qty: {reqItem?.total_quantity || 0}
+                    </p>
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    <p>CC: {reqItem?.call_center_manager_status || "pending"}</p>
+                    <p>Factory: {reqItem?.factory_incharge_status || "pending"}</p>
+                    <p>Team: {reqItem?.factory_team_assign_status || "pending"}</p>
+                    <p>POS: {reqItem?.pos_received_status || "pending"}</p>
+                  </div>
+                </div> */}
+
+                {(reqItem?.items || []).length === 0 ? (
+                  <p className="text-xs text-gray-500">No items.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {reqItem.items.map((item, idx) => (
+                      <div
+                        key={`${reqItem?.requisition_id}-${item?.variant_id}-${idx}`}
+                        className="flex items-center justify-between rounded-md border p-2"
+                      >
+                        <div>
+                          <p className="text-sm font-medium">{item?.variant_name || item?.product_name}</p>
+                          <p className="text-xs text-gray-500">
+                            Product ID: {item?.product_id} | Variant ID: {item?.variant_id}
+                          </p>
+                        </div>
+                        <p className="text-sm text-green-600 font-medium">
+                          Qty: {item?.requested_quantity || 0}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
